@@ -1,0 +1,2 @@
+conda activate news_app
+streamlit run app.py
