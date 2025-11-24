@@ -6,8 +6,8 @@ import re
 
 # --- 1. Page Config & CSS ---
 st.set_page_config(
-    page_title="PM Prep & News Grid",
-    page_icon="🚀",
+    page_title="NewsIQ: AI Briefs",  # <--- Change this
+    page_icon="🧠",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -289,7 +289,7 @@ with st.sidebar:
                 st.rerun()
 
 # --- 5. Main Layout ---
-st.title("🚀 PM Prep: The Daily Brief")
+st.title("🧠 NewsIQ: Read, Analyze, Gamify")
 
 if not selected_topics:
     st.warning("👈 Please select at least one topic in the sidebar!")
