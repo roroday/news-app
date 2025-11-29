@@ -194,7 +194,11 @@ with st.sidebar:
             "National (India)": '("India Politics" OR "Government of India" OR "Delhi" OR "Mumbai" OR "Bangalore News")',
             "Sports": '("Cricket" OR "Virat Kohli" OR "IPL" OR "BCCI" OR "Indian Football")',
             "Entertainment": '("Bollywood" OR "Cinema" OR "Movie Release" OR "Shah Rukh Khan" OR "Box Office")',
-            "International": '("Geopolitics" OR "United Nations" OR "International Relations" OR "War" OR "Diplomacy")'
+            "International": '("Geopolitics" OR "United Nations" OR "International Relations" OR "War" OR "Diplomacy")',
+            "Marketing & Advertising": '("Digital Marketing" OR "Ad Campaign" OR "SEO" OR "Brand Strategy" OR "Content Marketing" OR "Sales")',
+            "Health & Wellness": '("Healthcare" OR "Mental Health" OR "Wellness Trends" OR "Fitness" OR "Nutrition")',
+            "Environment & Sustainability": '("Climate Change" OR "Sustainability" OR "Renewable Energy" OR "Conservation" OR "Green Tech")',
+            
         }
 
         # Default selections
