@@ -3,6 +3,7 @@ import requests
 import google.generativeai as genai
 import json
 import re
+from gnews import GNews 
 
 # --- 1. Page Config & CSS ---
 st.set_page_config(
@@ -49,22 +50,70 @@ if 'analysis_cache' not in st.session_state: st.session_state.analysis_cache = {
 
 @st.cache_data(ttl=3600)
 def fetch_news(api_key, query):
-    # UNIFIED: Everything now uses the 'everything' endpoint for reliability
-    url = "https://newsapi.org/v2/everything"
-    params = {
-        "apiKey": api_key,
-        "q": query,
-        "language": "en",
-        "sortBy": "publishedAt", # Always get latest news
-        "pageSize": 12
-    }
+    articles = []
     
+    # --- SOURCE 1: GNEWS (Real-time, Headlines) ---
     try:
+        # We limit to 3 to keep it fast
+        google_news = GNews(language='en', country='IN', period='1d', max_results=3)
+        g_resp = google_news.get_news(query)
+        for item in g_resp:
+            articles.append({
+                "title": f"⚡ {item.get('title')}", 
+                "description": item.get('description', 'Live update from Google News.'),
+                "url": item.get('url'),
+                "urlToImage": None, 
+                "publishedAt": item.get('published date'),
+                "source": "GNews"
+            })
+    except:
+        pass # If GNews fails, just keep going
+
+    # --- SOURCE 2: NEWSDATA.IO (Good for Indian/Regional context) ---
+    try:
+        nd_key = st.secrets["NEWSDATA_KEY"]
+        # NewsData requires simplified queries (no complex AND/OR logic in free tier sometimes)
+        # So we take the first few words of your query to be safe
+        simple_query = query.replace('(', '').replace(')', '').split(" OR ")[0]
+        
+        url = f"https://newsdata.io/api/1/news?apikey={nd_key}&q={simple_query}&language=en"
+        response = requests.get(url)
+        data = response.json()
+        
+        if data.get("status") == "success":
+            for item in data.get("results", [])[:3]: # Limit to 3
+                articles.append({
+                    "title": f"🇮🇳 {item.get('title')}", # Flag to show it's from NewsData
+                    "description": item.get('description', 'Click to read more...'),
+                    "url": item.get('link'),
+                    "urlToImage": item.get('image_url'), # They provide images!
+                    "publishedAt": item.get('pubDate'),
+                    "source": "NewsData"
+                })
+    except:
+        pass
+
+    # --- SOURCE 3: NEWSAPI (Global, High Quality Images) ---
+    try:
+        url = "https://newsapi.org/v2/everything"
+        params = {
+            "apiKey": api_key,
+            "q": query,
+            "language": "en",
+            "sortBy": "publishedAt",
+            "pageSize": 8 # Get 8 from here
+        }
         response = requests.get(url, params=params)
         data = response.json()
-        return data.get("articles", []) if data.get("status") == "ok" else []
+        
+        if data.get("status") == "ok":
+            news_api_articles = data.get("articles", [])
+            articles.extend(news_api_articles)
+            
     except:
-        return []
+        pass
+        
+    return articles
 
 def generate_deep_dive(article_text):
     model = genai.GenerativeModel('gemini-2.0-flash')
@@ -176,12 +225,12 @@ with st.sidebar:
                 else:
                     st.error("❌ Could not send. Check GitHub settings.")
 
-    # --- FEED CUSTOMIZER (The "Settings" Panel) ---
+  # --- FEED CUSTOMIZER (The "Settings" Panel) ---
     st.divider()
     with st.expander("🛠️ Customize Your Feed", expanded=True):
         st.caption("Select topics to display on your dashboard:")
         
-        # MASTER TOPIC LIST (All defined with specific Queries now)
+        # MASTER TOPIC LIST
         master_topics = {
             "Product Management": '("Product Launch" OR "New Feature" OR "UX Design" OR "App Update" OR "SaaS Metrics") AND NOT (Job OR Hiring)',
             "Indian Biz Giants": '("Tata Group" OR "Reliance Industries" OR "Adani" OR "Infosys" OR "HDFC Bank" OR "Sensex")',
@@ -194,22 +243,39 @@ with st.sidebar:
             "National (India)": '("India Politics" OR "Government of India" OR "Delhi" OR "Mumbai" OR "Bangalore News")',
             "Sports": '("Cricket" OR "Virat Kohli" OR "IPL" OR "BCCI" OR "Indian Football")',
             "Entertainment": '("Bollywood" OR "Cinema" OR "Movie Release" OR "Shah Rukh Khan" OR "Box Office")',
+            "Books and Authors": '("Book Release" OR "Author Interview" OR "Bestseller" OR "Literature Festival")',
             "International": '("Geopolitics" OR "United Nations" OR "International Relations" OR "War" OR "Diplomacy")',
-            "Marketing & Advertising": '("Digital Marketing" OR "Ad Campaign" OR "SEO" OR "Brand Strategy" OR "Content Marketing" OR "Sales")',
-            "Health & Wellness": '("Healthcare" OR "Mental Health" OR "Wellness Trends" OR "Fitness" OR "Nutrition")',
-            "Environment & Sustainability": '("Climate Change" OR "Sustainability" OR "Renewable Energy" OR "Conservation" OR "Green Tech")',
-            
+            "Marketing & Sales": '("SEO" OR "Content Strategy" OR "Sales Growth" OR "Customer Acquisition") AND NOT ("Digital Marketing" OR "Social Media")',
+            "Fashion & Lifestyle": '("Fashion Trends" OR "Lifestyle Brands" OR "Sustainable Fashion" OR "Designer Collections")',
+            "FMCG": '("Fast-Moving Consumer Goods" OR "FMCG Brands" OR "Consumer Behavior" OR "Retail Market")',
         }
 
-        # Default selections
-        default_options = ["Product Management", "Tech Infrastructure", "Indian Biz Giants", "National (India)"]
+        # --- NEW LOGIC: URL PERSISTENCE ---
+        # 1. check if topics exist in URL
+        url_topics = st.query_params.get_all("topic")
         
+        # 2. If URL has topics, verify they are valid. If not, use hardcoded default.
+        if url_topics:
+            # Filter out any topics that might not exist in our master list anymore
+            valid_defaults = [t for t in url_topics if t in master_topics]
+            if valid_defaults:
+                default_options = valid_defaults
+            else:
+                default_options = ["Product Management", "Tech Infrastructure", "Indian Biz Giants", "National (India)"]
+        else:
+            default_options = ["Product Management", "Tech Infrastructure", "Indian Biz Giants", "National (India)"]
+        
+        # 3. Create the Multiselect
         selected_topics = st.multiselect(
             "Topic List:",
             options=list(master_topics.keys()),
             default=default_options,
             label_visibility="collapsed"
         )
+        
+        # 4. Sync Selection BACK to URL
+        # This updates the browser URL bar instantly when they change selection
+        st.query_params["topic"] = selected_topics
 
     # --- QUIZ SECTION ---
     st.divider()
