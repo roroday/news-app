@@ -14,6 +14,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# CSS for cards and hover effects
 st.markdown("""
 <style>
     div[data-testid="stExpander"] details summary p {
@@ -72,7 +73,8 @@ def deduplicate_articles(articles):
     return unique_articles
 
 def generate_deep_dive(article_text):
-    model = genai.GenerativeModel('gemini-2.0-flash')
+    # Using 2.5-flash for stability
+    model = genai.GenerativeModel('gemini-2.5-flash')
     prompt = f"""
     Analyze this news article for a Product Management interview.
     Return strictly valid JSON.
@@ -92,7 +94,12 @@ def generate_deep_dive(article_text):
     except: return None
 
 def generate_quiz_json(text_chunk, num_q):
-    model = genai.GenerativeModel('gemini-2.0-flash')
+    # DIAGNOSTIC PRINT: Check if input is empty
+    if not text_chunk or len(text_chunk) < 50:
+        st.error("⚠️ Error: Not enough text to generate a quiz. The articles might be empty.")
+        return []
+
+    model = genai.GenerativeModel('gemini-2.5-flash')
     prompt = f"""
     Create {num_q} multiple-choice questions based on this text.
     Return strictly valid JSON array.
@@ -113,7 +120,10 @@ def generate_quiz_json(text_chunk, num_q):
         clean = res.text.replace("```json", "").replace("```", "").strip()
         match = re.search(r'\[.*\]', clean, re.DOTALL)
         return json.loads(match.group(0)) if match else json.loads(clean)
-    except: return []
+    except Exception as e:
+        # LOUD ERROR: This will show up on screen now
+        st.error(f"⚠️ API Error: {str(e)}")
+        return []
 
 def submit_feedback_to_github(feedback_text, topic_request, rating):
     try:
@@ -134,9 +144,7 @@ def submit_feedback_to_github(feedback_text, topic_request, rating):
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_gnews_layer(query):
     articles = []
-    # If query is empty, GNews returns Top Headlines (Random stuff). We prevent that.
     if not query or len(query.strip()) < 2: return []
-    
     try:
         google_news = GNews(language='en', country='IN', period='2d', max_results=10)
         g_resp = google_news.get_news(query)
@@ -156,7 +164,6 @@ def fetch_gnews_layer(query):
 def fetch_newsdata_layer(query):
     articles = []
     if not query or len(query.strip()) < 2: return []
-
     try:
         nd_key = st.secrets.get("NEWSDATA_KEY", None)
         if nd_key:
@@ -181,7 +188,6 @@ def fetch_newsdata_layer(query):
 def fetch_newsapi_layer(api_key, query):
     articles = []
     if not query or len(query.strip()) < 2: return []
-    
     try:
         url = "https://newsapi.org/v2/everything"
         params = {"apiKey": api_key, "q": query, "language": "en", "sortBy": "publishedAt", "pageSize": 15}
@@ -243,7 +249,7 @@ with st.sidebar:
         )
         st.query_params["topic"] = selected_topics
         
-        # Use a Form to prevent premature searching
+        # Custom Search Form
         custom_query = ""
         if "🔍 Custom Search" in selected_topics:
             with st.form("search_form"):
@@ -252,7 +258,7 @@ with st.sidebar:
                 submitted = st.form_submit_button("Search 🔎")
                 if submitted:
                     custom_query = raw_query
-                    st.session_state['saved_custom_query'] = raw_query # Save for reloads
+                    st.session_state['saved_custom_query'] = raw_query 
                 elif 'saved_custom_query' in st.session_state:
                     custom_query = st.session_state['saved_custom_query']
 
@@ -271,26 +277,36 @@ with st.sidebar:
                 st.rerun()
 
         if st.button("📝 Start Quiz", type="primary", use_container_width=True):
-            with st.spinner("Generating..."):
+            with st.spinner("Generating Quiz (Please Wait)..."):
+                # Concatenate text from articles
                 full_text = " ".join([f"{a['title']} {a['description']}" for a in st.session_state.study_list])
-                num_articles = len(st.session_state.study_list)
-                q_count = 10 if num_articles == 1 else num_articles * 5
-                st.session_state.quiz_data = generate_quiz_json(full_text, q_count)
-                st.session_state.quiz_mode = True
-                st.session_state.current_q_index = 0
-                st.session_state.user_answers = {}
-                st.session_state.quiz_submitted = False
-                st.rerun()
+                
+                # DIAGNOSTIC: Ensure we have data
+                if len(full_text) < 50:
+                    st.error("⚠️ Error: The selected articles have almost no text content. Try adding different articles.")
+                else:
+                    num_articles = len(st.session_state.study_list)
+                    q_count = 10 if num_articles == 1 else num_articles * 5
+                    
+                    # Call Generation
+                    quiz_res = generate_quiz_json(full_text, q_count)
+                    
+                    if quiz_res:
+                        st.session_state.quiz_data = quiz_res
+                        st.session_state.quiz_mode = True
+                        st.session_state.current_q_index = 0
+                        st.session_state.user_answers = {}
+                        st.session_state.quiz_submitted = False
+                        st.rerun()
 
     st.divider()
     with st.expander("🚀 Release Notes"):
         st.caption("Latest Updates")
         st.markdown("""
-        **v1.6 - Search & Stability (Dec 2)**
-        - Fixed crash when no topics selected.
-        - Improved Custom Search (now requires button press).
-        **v1.5 - Focus Mode**
-        - Moved Quiz to central mobile-friendly card.
+        **v2.1 - Critical Fixes (Dec 12)**
+        - **Quiz:** Added diagnostics for API connectivity.
+        - **Feed:** Fixed crash on Filter Toolbar.
+        - **Search:** Enhanced custom keyword logic.
         """)
     
     with st.expander("💬 Feedback"):
@@ -312,10 +328,17 @@ with col_head_2:
             st.rerun()
 
 # === MODE SWITCH ===
+
+# CASE 1: Quiz Mode is ON
 if st.session_state.quiz_mode and st.session_state.quiz_data:
-    # QUIZ MODE Logic
+    
     total_q = len(st.session_state.quiz_data)
     current_q = st.session_state.current_q_index
+    
+    if current_q >= total_q:
+        current_q = 0
+        st.session_state.current_q_index = 0
+
     progress = (current_q + 1) / total_q
     st.progress(progress)
     
@@ -325,23 +348,32 @@ if st.session_state.quiz_mode and st.session_state.quiz_data:
         st.subheader(f"Question {current_q + 1} of {total_q}")
         st.markdown(f"### {q_data['question']}")
         
-        answer = st.radio("Select an answer:", q_data['options'], key=f"q_radio_{current_q}", index=None if current_q not in st.session_state.user_answers else q_data['options'].index(st.session_state.user_answers[current_q]))
+        radio_key = f"q_radio_{current_q}_{len(st.session_state.study_list)}"
+        prev_ans = st.session_state.user_answers.get(current_q)
+        
+        answer = st.radio(
+            "Select an answer:",
+            q_data['options'],
+            key=radio_key,
+            index=q_data['options'].index(prev_ans) if prev_ans in q_data['options'] else None
+        )
+        
         if answer: st.session_state.user_answers[current_q] = answer
+        
         st.write("---")
         
         c1, c2, c3 = st.columns([1, 2, 1])
         with c1:
-            if current_q > 0:
-                if st.button("⬅️ Previous"):
-                    st.session_state.current_q_index -= 1
-                    st.rerun()
+            if current_q > 0 and st.button("⬅️ Prev", use_container_width=True):
+                st.session_state.current_q_index -= 1
+                st.rerun()
         with c3:
             if current_q < total_q - 1:
-                if st.button("Next ➡️"):
+                if st.button("Next ➡️", use_container_width=True):
                     st.session_state.current_q_index += 1
                     st.rerun()
             else:
-                if st.button("Submit ✅", type="primary"):
+                if st.button("Submit ✅", type="primary", use_container_width=True):
                     st.session_state.quiz_submitted = True
                     st.rerun()
 
@@ -364,11 +396,15 @@ if st.session_state.quiz_mode and st.session_state.quiz_data:
         c1.metric("Score", f"{score}/{total_q}")
         c2.metric("Accuracy", f"{final_score:.0f}%")
         if final_score == 100: st.balloons()
+        
+        if st.button("🔄 Start New Quiz"):
+                st.session_state.quiz_mode = False
+                st.session_state.quiz_submitted = False
+                st.rerun()
 
+# CASE 2: Feed Mode
 else:
-    # FEED MODE
     if not selected_topics:
-        # Welcome Screen (Fixes the st.tabs error)
         st.info("👈 **Start Here!** Open the Sidebar menu to select topics.")
         c1, c2, c3 = st.columns(3)
         with c1: st.container(border=True).markdown("#### 1. Select Topics\nChoose from Tech, Crypto, Sports...")
@@ -378,7 +414,7 @@ else:
         tabs = st.tabs(selected_topics)
         for i, tab_name in enumerate(selected_topics):
             with tabs[i]:
-                # --- DYNAMIC QUERY LOGIC ---
+                # Dynamic Query Logic
                 if tab_name == "🔍 Custom Search":
                     if custom_query:
                         query = custom_query
@@ -389,24 +425,55 @@ else:
                 else:
                     query = master_topics[tab_name]
 
+                # Fetch Data
                 data_key = f"data_{tab_name}_{query}"
                 if data_key not in st.session_state:
                     with st.spinner(f"Fetching {query}..."):
                         st.session_state[data_key] = fetch_news(news_api_key, query)
                 
                 articles = st.session_state[data_key]
-                if not articles: st.warning("No articles found.")
+                
+                if not articles:
+                    st.warning("No articles found.")
                 else:
+                    # --- FIXED FILTER & SORT TOOLBAR ---
+                    with st.expander("🌪️ Filter & Sort", expanded=False):
+                        f1, f2 = st.columns([2, 1])
+                        
+                        # FORCE SOURCE TO STRING (Prevents 'dict' error)
+                        sources_list = []
+                        for a in articles:
+                            src = a.get('source', 'Unknown')
+                            # Handle Dictionary vs String source format
+                            if isinstance(src, dict):
+                                src_name = src.get('name', 'Unknown')
+                            else:
+                                src_name = str(src)
+                            sources_list.append(src_name)
+                            a['source'] = src_name # Normalize in-place
+                        
+                        unique_sources = sorted(list(set(sources_list)))
+                        
+                        selected_sources = f1.multiselect("Filter by Source:", unique_sources, default=unique_sources, key=f"src_{i}")
+                        sort_order = f2.radio("Sort by:", ["Newest", "Oldest"], horizontal=True, key=f"sort_{i}")
+                    
+                    # Apply Logic
+                    filtered_articles = [a for a in articles if a.get('source', 'Unknown') in selected_sources]
+                    if sort_order == "Oldest":
+                        filtered_articles.reverse()
+                    
+                    st.caption(f"Showing {len(filtered_articles)} articles")
+                    
+                    # --- RENDER CARDS ---
                     cols = st.columns(3)
-                    for idx, art in enumerate(articles):
+                    for idx, art in enumerate(filtered_articles):
                         with cols[idx % 3]: 
                             with st.container(border=True):
-                                st.caption(f"{str(art.get('title', ''))[:2]} {tab_name} • {str(art.get('publishedAt', ''))[:10]}")
+                                st.caption(f"{str(art.get('title', ''))[:2]}... • {str(art.get('publishedAt', ''))[:10]}")
                                 img_url = art.get('urlToImage') or "https://placehold.co/600x400?text=News"
                                 st.image(img_url, use_container_width=True)
                                 
-                                is_in_list = any(a['title'] == art['title'] for a in st.session_state.study_list)
-                                if is_in_list:
+                                if any(a['title'] == art['title'] for a in st.session_state.study_list):
                                     st.success("✅ Saved")
                                 else:
                                     if st.button("➕ Study", key=f"std_{i}_{idx}", use_container_width=True):
@@ -417,6 +484,7 @@ else:
                                 with st.expander(art['title']):
                                     st.write(art.get('description', ''))
                                     st.markdown(f"[🔗 Read Source]({art['url']})")
+                                    
                                     cache_key = art['title']
                                     if st.button("🤖 Analyze", key=f"anl_{i}_{idx}"):
                                         with st.spinner("Thinking..."):
