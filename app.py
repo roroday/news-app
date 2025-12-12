@@ -236,18 +236,28 @@ with st.sidebar:
             "FMCG": '("Fast-Moving Consumer Goods" OR "FMCG Brands" OR "Consumer Behavior" OR "Retail Market")',
         }
         
-        # Custom Search Setup
+       # Custom Search Setup
         topic_options = ["🔍 Custom Search"] + list(master_topics.keys())
-        url_topics = st.query_params.get_all("topic")
-        valid_defaults = [t for t in url_topics if t in topic_options]
         
+        # --- FIX: INITIALIZE STATE FROM URL (RUNS ONLY ONCE) ---
+        if "selected_topics_state" not in st.session_state:
+            url_topics = st.query_params.get_all("topic")
+            valid_defaults = [t for t in url_topics if t in topic_options]
+            st.session_state.selected_topics_state = valid_defaults
+
+        # --- CALLBACK TO UPDATE URL ---
+        def update_url():
+            st.query_params["topic"] = st.session_state.selected_topics_state
+
+        # --- WIDGET BOUND TO STATE ---
+        # No 'default' param needed because 'key' handles the value
         selected_topics = st.multiselect(
             "Topic List:", 
             options=topic_options, 
-            default=valid_defaults, 
+            key="selected_topics_state", 
+            on_change=update_url,
             label_visibility="collapsed"
         )
-        st.query_params["topic"] = selected_topics
         
         # Custom Search Form
         custom_query = ""
